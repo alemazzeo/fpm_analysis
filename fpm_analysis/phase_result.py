@@ -74,13 +74,24 @@ class FPMResult:
             # self._unwrapped[color] -= self._unwrapped[color].min()
             logger.info('Sample added')
 
-    def get_quotient(self, quotient: str = 'r/b', unwrap=True, roi=None):
+    @property
+    def unwrapped(self):
+        return self._unwrapped
+
+    @property
+    def phase(self):
+        return self._phase
+
+    def get_quotient(self, quotient: str = 'r/b', unwrap=True, roi=None, mean=False):
         phase = self._unwrapped if unwrap is True else self._phase
         phase = apply_roi(phase, roi)
         c_a = quotient.split('/')[0]
         c_b = quotient.split('/')[1]
         w = COLORS[c_a] / COLORS[c_b]
-        return phase[c_a] / phase[c_b] * w
+        if mean is True:
+            return (phase[c_a] - np.mean(phase[c_a])) / (phase[c_b] - np.mean(phase[c_a])) * w
+        else:
+            return phase[c_a] / phase[c_b] * w
 
     @optional_axes()
     def plot_amplitude(self, ax, color, roi=None):

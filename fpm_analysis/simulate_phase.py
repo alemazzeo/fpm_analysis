@@ -30,13 +30,22 @@ def constant_index_step_x(shape: Tuple[int, int], interval: Tuple[int, int], hei
     return step
 
 
-glass_SF10 = {'r': 1.7234,  # 630 nm
+glass_SF10 = {'name': 'SF10',
+              'r': 1.7234,  # 630 nm
               'g': 1.7390,  # 520 nm
               'b': 1.7507}  # 470 nm
 
-glass_BK7 = {'r': 1.5152,  # 630 nm
+glass_BAF10 = {'name': 'BAF10',
+               'r': 1.6672,  # 630 nm
+               'g': 1.6760,  # 520 nm
+               'b': 1.6823}  # 470 nm
+
+glass_BK7 = {'name': 'BK7',
+             'r': 1.5152,  # 630 nm
              'g': 1.5202,  # 520 nm
              'b': 1.5236}  # 470 nm
+
+
 
 
 class SimulatedPhaseResult(FPMResult):
@@ -86,20 +95,26 @@ class SimulatedPhaseResult(FPMResult):
                                                         n_index=material[c], wavelength=w)
         self.update()
 
-    def make_ladder(self, same_material=True, n_steps=4, dh=10.0, offset=0.0):
+    def make_ladder(self, materials=None, n_steps=4, dh=10.0, offset=0.0):
+        if materials is None:
+            materials = [glass_SF10, ]
+        n = len(materials)
         dx = self._shape[1] // n_steps
         interval = [(dx * i, dx * (i + 1)) for i in range(n_steps)]
         interval[-1] = (interval[-1][0], self._shape[1])
-        if same_material is True:
-            material = [glass_SF10, ] * n_steps
-        else:
-            material = [glass_SF10 if i % 2 == 0 else glass_BK7 for i in range(n_steps)]
+        materials = [materials[i % n] for i in range(n_steps)]
         params = [{'interval': interval[i],
                    'height': dh * (i+1) + offset,
-                   'material': material[i]} for i in range(n_steps)]
-
-        for param in params:
+                   'material': materials[i]} for i in range(n_steps)]
+        heights_mask = np.zeros(self._shape, dtype=float)
+        materials_mask = np.zeros(self._shape, dtype=int)
+        for i, param in enumerate(params):
+            x0 = param['interval'][0]
+            x1 = param['interval'][1]
+            heights_mask[:, x0:x1] = param['height']
+            materials_mask[:, x0:x1] = materials.index(param['material'])
             self.add_step_x(**param)
+        return heights_mask, materials_mask
 
     def add_random_normal_noise(self, amplitude: float = 0.0, std: float = 1.0, center: float = 0.0):
         for c, w in COLORS.items():
