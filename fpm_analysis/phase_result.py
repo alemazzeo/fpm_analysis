@@ -2,7 +2,6 @@ import logging
 import pathlib
 from functools import wraps
 from typing import Dict, Tuple
-import inspect
 
 import click
 import h5py
@@ -14,6 +13,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 COLORS = {'r': 0.630, 'g': 0.520, 'b': 0.480}
+
+latex_phi = {'re': r'e^{\phi_r}',
+             'ge': r'e^{\phi_g}',
+             'be': r'e^{\phi_b}',
+             'r': r'\phi_r',
+             'g': r'\phi_g',
+             'b': r'\phi_b'}
 
 
 def optional_axes(rows=1, columns=1):
@@ -29,7 +35,9 @@ def optional_axes(rows=1, columns=1):
             if force_show is True:
                 plt.show()
             return r
+
         return wrapped
+
     return decorator
 
 
@@ -54,6 +62,13 @@ class FPMResult:
         self._unwrapped: Dict[str, np.ndarray] = {}
         self._colors = None
         self._unwrap = True
+        self.global_r_shift = 0.0
+        self.global_g_shift = 0.0
+        self.global_b_shift = 0.0
+        self._last_x = None
+        self._last_y = None
+        self._last_x_label = None
+        self._last_y_label = None
 
     def load_hdf5(self, data):
         data = pathlib.Path(data)
@@ -114,6 +129,76 @@ class FPMResult:
         xc = self.get_quotient(x, roi=roi, unwrap=unwrap)
         yc = self.get_quotient(y, roi=roi, unwrap=unwrap)
         ax.plot(xc.flatten(), yc.flatten(), 'ro', markersize=0.1)
+
+    #
+    #
+
+    def exp_phase_shift(self, color: str = 'r', shift: float = 0.0, factor: float = 60):
+        """ Adds phase and returns unwrapped the selected color """
+        return np.exp((self.unwrapped[color] + shift) / factor)
+
+    def phase_shift(self, color: str = 'r', shift: float = 0.0):
+        """ Adds phase and returns unwrapped the selected color """
+        return self.unwrapped[color] + shift
+
+    def _get_phase(self, a, r_shift, b_shift, g_shift):
+        if 'e' in a:
+            return self.exp_phase_shift(a[0], locals()[f'{a[0]}_shift'])
+        else:
+            return self.phase_shift(a[0], locals()[f'{a[0]}_shift'])
+
+    def get_x_y(self, xc: str = 're/ge', yc: str = 'b/g', r_shift: float = 0, g_shift: float = 0, b_shift: float = 0):
+        """ Gets x-y curves from selected quotients """
+        x0, x1 = xc.replace(' ', '').split("/")
+        y0, y1 = yc.replace(' ', '').split("/")
+
+        rs = self.global_r_shift + r_shift
+        gs = self.global_g_shift + g_shift
+        bs = self.global_b_shift + b_shift
+
+        a = self._get_phase(x0, rs, gs, bs)
+        b = self._get_phase(x1, rs, gs, bs)
+        c = self._get_phase(y0, rs, gs, bs)
+        d = self._get_phase(y1, rs, gs, bs)
+
+        self._last_x = a / b
+        self._last_y = c / d
+
+        return self._last_x, self._last_y
+
+
+    def get_x_y_labels(self, x: str = 're/ge', y: str = 'b/g'):
+        """ Gets labels for x and y curves"""
+        x0, x1 = x.replace(' ', '').split("/")
+        y0, y1 = y.replace(' ', '').split("/")
+
+        x_label = f'${latex_phi[x0]} / {latex_phi[x1]}$'
+        y_label = f'${latex_phi[y0]} / {latex_phi[y1]}$'
+
+        self._last_x_label = x_label
+        self._last_y_label = y_label
+
+        return self._last_x_label, self._last_y_label
+
+    def fitness(self, x=None, y=None):
+        if x is None:
+            x = self._last_x
+        if y is None:
+            y = self._last_y
+
+        hist2d = np.histogram2d(x=x.flatten(), y=y.flatten(), bins=100)[0]
+        return np.std(hist2d.flatten())
+
+
+    def _fitness(self, x=None, y=None):
+        if x is None:
+            x = self._last_x
+        if y is None:
+            y = self._last_y
+
+        x_mean = np.mean(x)
+        y_mean = np.mean(y)
+        return np.sum((x - x_mean) ** 2) + np.sum((y - y_mean) ** 2)
 
 
 @click.command()

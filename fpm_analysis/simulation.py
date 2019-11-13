@@ -1,27 +1,33 @@
 from typing import Tuple
 
-import matplotlib
-
-default_color_cycler = [c['color'] for c in matplotlib.rcParams['axes.prop_cycle']]
-
-import matplotlib.pyplot as plt
-from matplotlib import colors
 import numpy as np
-from matplotlib.widgets import Slider, Button, RadioButtons
+from scipy.optimize import minimize
+import matplotlib.pyplot as plt
 
 from fpm_analysis.simulate_phase import SimulatedPhaseResult, glass_BK7, glass_SF10, glass_BAF10
+
+# Configuration
 
 SIZE = 128
 MATERIALS = [glass_BK7, glass_SF10, glass_BAF10]
 STEPS = 32
 DH_MAX = 1.0
 OFFSET = 0.0
-NOISE = 0.1
+NOISE = 0.001
 NOISE_STD = 1.0
 NOISE_CENTER = 0.0
 
+xc = 'r/g'
+yc = 'b/g'
+
+r_shift = 0
+g_shift = 0
+b_shift = 0
+
 step_size = SIZE // STEPS
 dh = DH_MAX / STEPS
+
+# Report
 
 print(f'SIZE: {SIZE}')
 print(f'MATERIALS: {",".join([m["name"] for m in MATERIALS])}')
@@ -34,6 +40,8 @@ print(f'NOISE: Gaussian\n'
       f'       {NOISE_STD} std\n'
       f'       {NOISE_CENTER} center')
 
+# Simulation
+
 simulated_result = SimulatedPhaseResult(shape=(SIZE, SIZE))
 
 simulated_result.reset_sim()
@@ -41,79 +49,44 @@ heights_mask, materials_mask = simulated_result.make_ladder(materials=MATERIALS,
                                                             n_steps=STEPS,
                                                             dh=dh,
                                                             offset=OFFSET)
+
+simulated_result.global_r_shift = r_shift
+simulated_result.global_b_shift = b_shift
+simulated_result.global_g_shift = g_shift
+
 simulated_result.add_random_normal_noise(NOISE)
 
+x, y = simulated_result.get_x_y(xc, yc)
+x_label, y_label = simulated_result.get_x_y_labels(xc, yc)
 
-def exp_phase_shift(color: str = 'r', shift: float = 0.0, factor: float = 60):
-    """ Adds phase and returns unwrapped the selected color """
-    return np.exp((simulated_result.unwrapped[color] + shift) / factor)
+simulated_result.plot_simulation(x=x, y=y, x_label=x_label, y_label=y_label)
+plt.hist2d(simulated_result._last_x.flatten(), simulated_result._last_y.flatten(), bins=100)
+plt.show()
 
-
-def phase_shift(color: str = 'r', shift: float = 0.0):
-    """ Adds phase and returns unwrapped the selected color """
-    return simulated_result.unwrapped[color] + shift
-
-
-r_shift = 0
-g_shift = 0
-b_shift = 0
-
-re = exp_phase_shift('r', r_shift)
-ge = exp_phase_shift('g', b_shift)
-be = exp_phase_shift('b', g_shift)
-
-r = phase_shift('r', r_shift)
-g = phase_shift('g', b_shift)
-b = phase_shift('b', g_shift)
-
-x = re / ge
-x_label = r'$e^{\phi_r} / e^{\phi_g}$'
-y = b / g
-y_label = r'$\phi_b / \phi_g $'
-
-grid = plt.GridSpec(4, 3, wspace=0.4, hspace=0)
-ax1: plt.Axes = plt.subplot(grid[0, 0])
-plt.setp(ax1.get_xticklabels(), visible=False)
-plt.setp(ax1.get_yticklabels(), visible=False)
-ax2: plt.Axes = plt.subplot(grid[1, 0], sharex=ax1)
-plt.setp(ax2.get_xticklabels(), visible=False)
-plt.setp(ax2.get_yticklabels(), visible=False)
-ax3: plt.Axes = plt.subplot(grid[2, 0], sharex=ax1)
-plt.setp(ax3.get_xticklabels(), visible=False)
-plt.setp(ax3.get_yticklabels(), visible=False)
-ax4: plt.Axes = plt.subplot(grid[:, 1:])
-
-r1 = ax1.imshow(re[0:SIZE // 2, :], cmap='hot')
-plt.colorbar(r1, ax=ax1, shrink=0.66)
-ax1.set_ylabel('Phase\n(red)', fontsize=14)
-r2 = ax2.imshow(materials_mask[0:SIZE // 2, :], cmap=colors.ListedColormap(default_color_cycler[0:len(MATERIALS)]))
-cbar = plt.colorbar(r2, ax=ax2, shrink=0.66, ticks=[i for i in range(len(MATERIALS))])
-cbar.ax.set_yticklabels([m["name"] for m in MATERIALS])
-ax2.set_ylabel('Material\n', fontsize=14)
-r3 = ax3.imshow(heights_mask[0:SIZE // 2, :], cmap='Blues')
-plt.colorbar(r3, ax=ax3, shrink=0.66)
-ax3.set_ylabel(f'Heights\n(um)', fontsize=14)
-
-for i, m in enumerate(MATERIALS):
-    ax4.plot(x[materials_mask == i].flatten(), y[materials_mask == i].flatten(),
-             ls='', marker='.', label=f'{m["name"]}')
-ax4.set_xlabel(xlabel=x_label, fontsize=14)
-ax4.set_ylabel(ylabel=y_label, fontsize=14)
-
-plt.legend()
-figManager = plt.get_current_fig_manager()
-figManager.window.showMaximized()
-
-# t = np.arange(0.0, 1.0, 0.001)
-# a0 = 5
-# f0 = 3
-# delta_f = 5.0
-# s = a0 * np.sin(2 * np.pi * f0 * t)
-# l, = plt.plot(t, s, lw=2)
-#
-# ax_controls: plt.Axes = plt.subplot2grid((8, 3), (7,0), )
-# ax_controls.clear()
-# sfreq = Slider(ax_controls, 'Freq', 0.1, 30.0, valinit=f0, valstep=delta_f)
+# N = 100
+# fitness = np.zeros((N, N, N), dtype=float)
+# r_interval = np.linspace(-100, 100, N)
+# g_interval = np.linspace(-100, 100, N)
+# b_interval = np.linspace(-100, 100, N)
+# for i, rs in enumerate(r_interval):
+#     for j, gs in enumerate(g_interval):
+#         for k, bs in enumerate(b_interval):
+#             fitness[i][j][k] = simulated_result.fitness(rs, gs, bs, xc, yc)
 
 
+def fitness(phases: Tuple[float, float, float], xc, yc):
+    x, y = simulated_result.get_x_y(xc, yc, r_shift=-phases[0], g_shift=-phases[1], b_shift=-phases[2])
+    print(phases)
+    return simulated_result.fitness(x, y)
+
+
+res = minimize(fitness, np.array([0, 0, 0]), args=(xc, yc),
+               bounds=[(-100, 100), (-100, 100), (-100, 100)])
+
+print(res)
+print(r_shift, g_shift, b_shift)
+
+simulated_result.get_x_y(xc, yc, *res.x)
+simulated_result.plot_simulation()
+plt.hist2d(simulated_result._last_x.flatten(), simulated_result._last_y.flatten(), bins=100)
 plt.show()

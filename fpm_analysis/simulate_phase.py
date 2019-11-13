@@ -1,8 +1,13 @@
 import logging
 from typing import Tuple
 
+import matplotlib
+
+default_color_cycler = [c['color'] for c in matplotlib.rcParams['axes.prop_cycle']]
+
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import colors
 
 from fpm_analysis.phase_result import FPMResult, COLORS
 
@@ -46,8 +51,6 @@ glass_BK7 = {'name': 'BK7',
              'b': 1.5236}  # 470 nm
 
 
-
-
 class SimulatedPhaseResult(FPMResult):
     def __init__(self, shape=(128, 128), *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -56,6 +59,10 @@ class SimulatedPhaseResult(FPMResult):
         self._layer_sim = {color: np.zeros(shape, dtype=float) for color in COLORS}
         self._layer_noise = {color: np.zeros(shape, dtype=float) for color in COLORS}
         self._phase_shifts = {color: 0.0 for color in COLORS}
+
+        self._materials_list = []
+        self._materials_mask = np.zeros(shape, dtype=float)
+        self._heights_mask = np.zeros(shape, dtype=float)
 
     def update(self):
         self._unwrapped = {color: (self._layer_sim[color]
@@ -98,6 +105,7 @@ class SimulatedPhaseResult(FPMResult):
     def make_ladder(self, materials=None, n_steps=4, dh=10.0, offset=0.0):
         if materials is None:
             materials = [glass_SF10, ]
+        self._materials_list = materials
         n = len(materials)
         dx = self._shape[1] // n_steps
         interval = [(dx * i, dx * (i + 1)) for i in range(n_steps)]
@@ -114,6 +122,9 @@ class SimulatedPhaseResult(FPMResult):
             heights_mask[:, x0:x1] = param['height']
             materials_mask[:, x0:x1] = materials.index(param['material'])
             self.add_step_x(**param)
+        self._materials_mask = materials_mask
+        self._heights_mask = heights_mask
+
         return heights_mask, materials_mask
 
     def add_random_normal_noise(self, amplitude: float = 0.0, std: float = 1.0, center: float = 0.0):
@@ -126,6 +137,52 @@ class SimulatedPhaseResult(FPMResult):
         for c, w in COLORS.items():
             self._layer_sim[c] += noise
         self.update()
+
+    def plot_simulation(self, x=None, y=None, x_label=None, y_label=None):
+        if x is None:
+            x = self._last_x
+        if y is None:
+            y = self._last_y
+        if x_label is None:
+            x_label = self._last_x_label
+        if y_label is None:
+            y_label = self._last_y_label
+
+        grid = plt.GridSpec(3, 3, wspace=0.4, hspace=0)
+        ax1: plt.Axes = plt.subplot(grid[0, 0])
+        plt.setp(ax1.get_xticklabels(), visible=False)
+        plt.setp(ax1.get_yticklabels(), visible=False)
+        ax2: plt.Axes = plt.subplot(grid[1, 0], sharex=ax1)
+        plt.setp(ax2.get_xticklabels(), visible=False)
+        plt.setp(ax2.get_yticklabels(), visible=False)
+        ax3: plt.Axes = plt.subplot(grid[2, 0], sharex=ax1)
+        plt.setp(ax3.get_xticklabels(), visible=False)
+        plt.setp(ax3.get_yticklabels(), visible=False)
+        ax4: plt.Axes = plt.subplot(grid[:, 1:])
+
+        r1 = ax1.imshow(self.unwrapped['r'][0:self._shape[0] // 2, :], cmap='hot')
+        plt.colorbar(r1, ax=ax1, shrink=0.66)
+        ax1.set_ylabel('Phase\n(red)', fontsize=14)
+        r2 = ax2.imshow(self._materials_mask[0:self._shape[0] // 2, :],
+                        cmap=colors.ListedColormap(default_color_cycler[0:len(self._materials_list)]))
+        cbar = plt.colorbar(r2, ax=ax2, shrink=0.66, ticks=[i for i in range(len(self._materials_list))])
+        cbar.ax.set_yticklabels([m["name"] for m in self._materials_list])
+        ax2.set_ylabel('Material\n', fontsize=14)
+        r3 = ax3.imshow(self._heights_mask[0:self._shape[0] // 2, :], cmap='Blues')
+        plt.colorbar(r3, ax=ax3, shrink=0.66)
+        ax3.set_ylabel(f'Heights\n(um)', fontsize=14)
+
+        for i, m in enumerate(self._materials_list):
+            ax4.plot(x[self._materials_mask == i].flatten(), y[self._materials_mask == i].flatten(),
+                     ls='', marker='.', alpha=0.5, label=f'{m["name"]}')
+        ax4.set_xlabel(xlabel=x_label, fontsize=14)
+        ax4.set_ylabel(ylabel=y_label, fontsize=14)
+        ax4.set_title(f'Fitness: {self.fitness():.2e}')
+
+        plt.legend()
+        figManager = plt.get_current_fig_manager()
+        figManager.window.showMaximized()
+        plt.show()
 
 
 if __name__ == '__main__':
