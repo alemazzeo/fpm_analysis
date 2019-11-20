@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from matplotlib import colors
 
 from fpm_analysis.phase_result import FPMResult, COLORS
+from skimage.restoration import unwrap_phase
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -69,6 +70,9 @@ class SimulatedPhaseResult(FPMResult):
                                    + self._layer_noise[color]
                                    + self._phase_shifts[color])
                            for color in COLORS}
+        self._phase = {c: w - np.floor(w / (2 * np.pi)) * 2 * np.pi
+                       for c, w in self._unwrapped.items()}
+        # self._unwrapped = {c: unwrap_phase(w, wrap_around=True) for c, w in self._phase.items()}
 
     def set_phase_shift(self, **kwargs):
         for color, value in kwargs.items():
@@ -138,29 +142,32 @@ class SimulatedPhaseResult(FPMResult):
             self._layer_sim[c] += noise
         self.update()
 
-    def plot_simulation(self, x=None, y=None, x_label=None, y_label=None):
-        if x is None:
-            x = self._last_x
-        if y is None:
-            y = self._last_y
-        if x_label is None:
-            x_label = self._last_x_label
-        if y_label is None:
-            y_label = self._last_y_label
+    def plot_scatter(self, x=None, y=None, x_label=None, y_label=None,
+                     mask=None, mask_names=None, ax=None, pick_event=None):
+        if mask is None:
+            mask = self._materials_mask
 
-        grid = plt.GridSpec(3, 3, wspace=0.4, hspace=0)
-        ax1: plt.Axes = plt.subplot(grid[0, 0])
+        if mask_names is None:
+            mask_names = [x['name'] for x in self._materials_list]
+
+        super().plot_scatter(x, y, x_label, y_label, mask, mask_names, ax, pick_event)
+
+    def plot_simulation(self, x=None, y=None, x_label=None, y_label=None):
+
+        grid = plt.GridSpec(4, 3, wspace=0.4, hspace=0)
+        ax1: plt.Axes = plt.subplot(grid[0:2, 0])
         plt.setp(ax1.get_xticklabels(), visible=False)
         plt.setp(ax1.get_yticklabels(), visible=False)
-        ax2: plt.Axes = plt.subplot(grid[1, 0], sharex=ax1)
+        ax2: plt.Axes = plt.subplot(grid[2, 0], sharex=ax1)
         plt.setp(ax2.get_xticklabels(), visible=False)
         plt.setp(ax2.get_yticklabels(), visible=False)
-        ax3: plt.Axes = plt.subplot(grid[2, 0], sharex=ax1)
+        ax3: plt.Axes = plt.subplot(grid[3, 0], sharex=ax1)
         plt.setp(ax3.get_xticklabels(), visible=False)
         plt.setp(ax3.get_yticklabels(), visible=False)
         ax4: plt.Axes = plt.subplot(grid[:, 1:])
 
-        r1 = ax1.imshow(self.unwrapped['r'][0:self._shape[0] // 2, :], cmap='hot')
+        r1 = ax1.imshow(self.unwrapped['r'], cmap='hot')
+        selected, = ax1.plot([], [], ls='', marker='.', alpha=0.5)
         plt.colorbar(r1, ax=ax1, shrink=0.66)
         ax1.set_ylabel('Phase\n(red)', fontsize=14)
         r2 = ax2.imshow(self._materials_mask[0:self._shape[0] // 2, :],
@@ -172,14 +179,13 @@ class SimulatedPhaseResult(FPMResult):
         plt.colorbar(r3, ax=ax3, shrink=0.66)
         ax3.set_ylabel(f'Heights\n(um)', fontsize=14)
 
-        for i, m in enumerate(self._materials_list):
-            ax4.plot(x[self._materials_mask == i].flatten(), y[self._materials_mask == i].flatten(),
-                     ls='', marker='.', alpha=0.5, label=f'{m["name"]}')
-        ax4.set_xlabel(xlabel=x_label, fontsize=14)
-        ax4.set_ylabel(ylabel=y_label, fontsize=14)
-        ax4.set_title(f'Fitness: {self.fitness():.2e}')
+        def on_pick(event):
+            yp, xp = np.unravel_index(event.real_id, x.shape)
+            selected.set_data(xp, yp)
+            plt.draw()
 
-        plt.legend()
+        self.plot_scatter(x, y, x_label, y_label, ax=ax4, pick_event=on_pick)
+
         figManager = plt.get_current_fig_manager()
         figManager.window.showMaximized()
         plt.show()

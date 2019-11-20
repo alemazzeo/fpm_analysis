@@ -60,6 +60,7 @@ class FPMResult:
         self._amplitude: Dict[str, np.ndarray] = {}
         self._phase: Dict[str, np.ndarray] = {}
         self._unwrapped: Dict[str, np.ndarray] = {}
+        self._diff: Dict[str, np.ndarray] = {}
         self._colors = None
         self._unwrap = True
         self.global_r_shift = 0.0
@@ -85,7 +86,7 @@ class FPMResult:
             self._phase[color] = np.angle(self._sample[color])
             # self._phase[color] -= self._phase[color].min()
             self._amplitude[color] = np.absolute(self._sample[color])
-            self._unwrapped[color] = unwrap_phase(self._phase[color])
+            self._unwrapped[color] = unwrap_phase(self._phase[color], wrap_around=True)
             # self._unwrapped[color] -= self._unwrapped[color].min()
             logger.info('Sample added')
 
@@ -141,7 +142,7 @@ class FPMResult:
         """ Adds phase and returns unwrapped the selected color """
         return self.unwrapped[color] + shift
 
-    def _get_phase(self, a, r_shift, b_shift, g_shift):
+    def _get_phase(self, a, r_shift, g_shift, b_shift):
         if 'e' in a:
             return self.exp_phase_shift(a[0], locals()[f'{a[0]}_shift'])
         else:
@@ -166,7 +167,6 @@ class FPMResult:
 
         return self._last_x, self._last_y
 
-
     def get_x_y_labels(self, x: str = 're/ge', y: str = 'b/g'):
         """ Gets labels for x and y curves"""
         x0, x1 = x.replace(' ', '').split("/")
@@ -180,7 +180,128 @@ class FPMResult:
 
         return self._last_x_label, self._last_y_label
 
-    def fitness(self, x=None, y=None):
+    def plot_scatter(self, x=None, y=None, x_label=None, y_label=None,
+                     mask=None, mask_names=None, ax=None, pick_event=None, alpha=0.005):
+
+        if x is None:
+            x = self._last_x
+        if y is None:
+            y = self._last_y
+        if x_label is None:
+            x_label = self._last_x_label
+        if y_label is None:
+            y_label = self._last_y_label
+
+        if ax is None:
+            fig: plt.Figure
+            ax: plt.Axes
+            fig, ax = plt.subplots(1, 1)
+        fig = ax.get_figure()
+
+        x = x.flatten()
+        y = y.flatten()
+
+        scatter = []
+        if mask is None:
+            ax.plot(x.flatten(), y.flatten(), ls='', marker='.', alpha=alpha, picker=50)
+        else:
+            mask = mask.flatten()
+            if mask_names is not None:
+                for i, m in enumerate(mask_names):
+                    p, = ax.plot(x[mask == i], y[mask == i], ls='', marker='.', alpha=alpha, label=f'{m}', picker=50)
+                    scatter.append(p)
+
+            else:
+                raise ValueError
+        ax.set_xlabel(xlabel=x_label, fontsize=14)
+        ax.set_ylabel(ylabel=y_label, fontsize=14)
+        ax.set_title(f'Fitness: {self.fitness():.2e}')
+        ax.legend()
+
+        def on_pick(event):
+            if mask is None:
+                real_id = event.ind
+            else:
+                real_id = np.arange(mask.size)[mask == scatter.index(event.artist)][event.ind]
+            event.real_id = real_id
+            if pick_event is not None:
+                pick_event(event)
+
+        fig.canvas.mpl_connect('pick_event', on_pick)
+
+    def plot_image(self, image, cmap='gray', ax=None, click_event=None):
+        if ax is None:
+            fig: plt.Figure
+            ax: plt.Axes
+            fig, ax = plt.subplots(1, 1)
+        fig = ax.get_figure()
+
+        r = ax.imshow(image, cmap=cmap)
+        p, = ax.plot([], [], 'o', ms=14, markerfacecolor="None",
+                    markeredgecolor='black', markeredgewidth=1)
+        plt.colorbar(r, ax=ax, shrink=0.66)
+        ax.point = p
+        def on_click(event):
+            if click_event is not None:
+                if event.inaxes is ax:
+                    click_event(event)
+
+        fig.canvas.mpl_connect('button_press_event', on_click)
+
+    def plot_result(self, x=None, y=None, x_label=None, y_label=None):
+
+        grid = plt.GridSpec(3, 3, wspace=0.4, hspace=0)
+        ax1: plt.Axes = plt.subplot(grid[0, 0])
+        plt.setp(ax1.get_xticklabels(), visible=False)
+        plt.setp(ax1.get_yticklabels(), visible=False)
+        ax2: plt.Axes = plt.subplot(grid[1, 0], sharex=ax1)
+        plt.setp(ax2.get_xticklabels(), visible=False)
+        plt.setp(ax2.get_yticklabels(), visible=False)
+        ax3: plt.Axes = plt.subplot(grid[2, 0], sharex=ax1)
+        plt.setp(ax3.get_xticklabels(), visible=False)
+        plt.setp(ax3.get_yticklabels(), visible=False)
+        ax4: plt.Axes = plt.subplot(grid[:, 1:])
+
+        selected_r, = ax1.plot([], [], ls='', marker='.', alpha=0.5, color='r')
+        ax1.set_ylabel('Phase\n(red)', fontsize=14)
+
+        selected_g, = ax2.plot([], [], ls='', marker='.', alpha=0.5, color='g')
+        ax2.set_ylabel('Phase\n(green)', fontsize=14)
+
+        selected_b, = ax3.plot([], [], ls='', marker='.', alpha=0.5, color='b')
+        ax3.set_ylabel('Phase\n(blue)', fontsize=14)
+
+        xx, yy = np.meshgrid(np.arange(x.shape[0]), np.arange(x.shape[1]))
+
+        def on_pick(event):
+            yp, xp = np.unravel_index(event.real_id, x.shape)
+            selected_r.set_data(xp, yp)
+            selected_g.set_data(xp, yp)
+            selected_b.set_data(xp, yp)
+            plt.draw()
+
+        def on_click(event):
+            print(f'event.xdata: {event.xdata} - event.ydata: {event.ydata}')
+            mask = np.zeros_like(x, dtype=bool)
+            ax = event.inaxes
+            mask[((yy - event.ydata) ** 2 + (xx - event.xdata) ** 2) < 100] = True
+            ax.point.set_data(event.xdata, event.ydata)
+            ax4.clear()
+            self.plot_scatter(x[mask], y[mask], x_label, y_label, ax=ax4, pick_event=on_pick,
+                              alpha=0.8)
+            plt.draw()
+
+        self.plot_image(self.unwrapped['r'], cmap='Reds', ax=ax1)
+        self.plot_image(self.unwrapped['g'], cmap='Greens', ax=ax2, click_event=on_click)
+        self.plot_image(self.unwrapped['b'], cmap='Blues', ax=ax3)
+
+        self.plot_scatter(x, y, x_label, y_label, ax=ax4, pick_event=on_pick)
+
+        figManager = plt.get_current_fig_manager()
+        figManager.window.showMaximized()
+        plt.show()
+
+    def _fitness(self, x=None, y=None):
         if x is None:
             x = self._last_x
         if y is None:
@@ -189,8 +310,7 @@ class FPMResult:
         hist2d = np.histogram2d(x=x.flatten(), y=y.flatten(), bins=100)[0]
         return np.std(hist2d.flatten())
 
-
-    def _fitness(self, x=None, y=None):
+    def fitness(self, x=None, y=None):
         if x is None:
             x = self._last_x
         if y is None:
@@ -198,7 +318,7 @@ class FPMResult:
 
         x_mean = np.mean(x)
         y_mean = np.mean(y)
-        return np.sum((x - x_mean) ** 2) + np.sum((y - y_mean) ** 2)
+        return np.sum((x - x_mean) ** 2 + (y - y_mean) ** 2)
 
 
 @click.command()
