@@ -9,6 +9,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from skimage.restoration import unwrap_phase
 
+plt.rcParams['toolbar'] = 'toolmanager'
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -200,52 +202,87 @@ class FPMResult:
 
         x = x.flatten()
         y = y.flatten()
-
-        scatter = []
+        ax.data_index = np.arange(len(x))
+        ax.curves = []
         if mask is None:
-            ax.plot(x.flatten(), y.flatten(), ls='', marker='.', alpha=alpha, picker=50)
+            ax.mask = np.zeros_like(x, dtype=int)
+            ax.mask_names = ['All data']
+            ax.curves.append(ax.plot(x.flatten(), y.flatten(), ls='', marker='.',
+                                     alpha=alpha, picker=50)[0])
         else:
-            mask = mask.flatten()
+            ax.mask = np.asarray(mask.flatten(), dtype=int)
+            ax.mask_names = mask_names
             if mask_names is not None:
-                for i, m in enumerate(mask_names):
-                    p, = ax.plot(x[mask == i], y[mask == i], ls='', marker='.', alpha=alpha, label=f'{m}', picker=50)
-                    scatter.append(p)
+                for i, m in enumerate(ax.mask_names):
+                    ax.curves.append(ax.plot(x[ax.mask == i], y[ax.mask  == i], ls='', marker='.',
+                                             alpha=alpha, label=f'{m}', picker=50)[0])
 
             else:
                 raise ValueError
+
+        ax.selected = ax.plot([], [], ls='', marker='.', alpha=0.5, label='Selected')[0]
+        ax.selected_map = None
         ax.set_xlabel(xlabel=x_label, fontsize=14)
         ax.set_ylabel(ylabel=y_label, fontsize=14)
         ax.set_title(f'Fitness: {self.fitness():.2e}')
         ax.legend()
 
         def on_pick(event):
-            if mask is None:
-                real_id = event.ind
+            if event.artist in ax.curves:
+                event.real_id = np.arange(ax.mask.size)[ax.mask == ax.curves.index(event.artist)][event.ind]
+            elif event.artist is ax.selected:
+                event.real_id = ax.selected_map[event.ind]
             else:
-                real_id = np.arange(mask.size)[mask == scatter.index(event.artist)][event.ind]
-            event.real_id = real_id
+                return
+
             if pick_event is not None:
                 pick_event(event)
 
+        def toggle_main_curves(axes, visibility: bool):
+            for c in axes.curves:
+                c.set_visible(visibility)
+
+        ax.toggle_main_curves = toggle_main_curves
+
+        def reset(axes):
+            axes.toggle_main_curves(True)
+            axes.selected.set_data([], [])
+
+        ax.reset = reset
+
         fig.canvas.mpl_connect('pick_event', on_pick)
 
-    def plot_image(self, image, cmap='gray', ax=None, click_event=None):
+    def plot_image(self, phase, color='r', cmap='gray', ax=None, click_event=None):
         if ax is None:
             fig: plt.Figure
             ax: plt.Axes
             fig, ax = plt.subplots(1, 1)
         fig = ax.get_figure()
 
-        r = ax.imshow(image, cmap=cmap)
+        r = ax.imshow(phase[color], cmap=cmap)
         p, = ax.plot([], [], 'o', ms=14, markerfacecolor="None",
-                    markeredgecolor='black', markeredgewidth=1)
+                     markeredgecolor='black', markeredgewidth=1)
         plt.colorbar(r, ax=ax, shrink=0.66)
         ax.point = p
+        ax.selected = ax.plot([], [], ls='', marker='.', alpha=0.5, color=color, label='Selected')[0]
+        ax.set_ylabel(f'Phase ({color})', fontsize=14)
+        ax.color = color
+        ax.phase = phase
+        xx, yy = np.meshgrid(np.arange(phase[color].shape[0]), np.arange(phase[color].shape[1]))
+        ax.xx = xx
+        ax.yy = yy
+        ax.mask = np.zeros_like(phase[color], dtype=bool)
+
         def on_click(event):
             if click_event is not None:
                 if event.inaxes is ax:
                     click_event(event)
 
+        def reset(axes):
+            axes.selected.set_data([], [])
+            axes.mask = np.zeros_like(phase[color], dtype=bool)
+
+        ax.reset = reset
         fig.canvas.mpl_connect('button_press_event', on_click)
 
     def plot_result(self, x=None, y=None, x_label=None, y_label=None):
@@ -262,39 +299,23 @@ class FPMResult:
         plt.setp(ax3.get_yticklabels(), visible=False)
         ax4: plt.Axes = plt.subplot(grid[:, 1:])
 
-        selected_r, = ax1.plot([], [], ls='', marker='.', alpha=0.5, color='r')
-        ax1.set_ylabel('Phase\n(red)', fontsize=14)
-
-        selected_g, = ax2.plot([], [], ls='', marker='.', alpha=0.5, color='g')
-        ax2.set_ylabel('Phase\n(green)', fontsize=14)
-
-        selected_b, = ax3.plot([], [], ls='', marker='.', alpha=0.5, color='b')
-        ax3.set_ylabel('Phase\n(blue)', fontsize=14)
-
-        xx, yy = np.meshgrid(np.arange(x.shape[0]), np.arange(x.shape[1]))
-
         def on_pick(event):
             yp, xp = np.unravel_index(event.real_id, x.shape)
-            selected_r.set_data(xp, yp)
-            selected_g.set_data(xp, yp)
-            selected_b.set_data(xp, yp)
+            ax2.selected.set_data(xp, yp)
             plt.draw()
 
         def on_click(event):
-            print(f'event.xdata: {event.xdata} - event.ydata: {event.ydata}')
-            mask = np.zeros_like(x, dtype=bool)
             ax = event.inaxes
-            mask[((yy - event.ydata) ** 2 + (xx - event.xdata) ** 2) < 100] = True
+            ax.mask[:] = False
+            ax.mask[((ax.yy - event.ydata) ** 2 + (ax.xx - event.xdata) ** 2) < 100] = True
             ax.point.set_data(event.xdata, event.ydata)
-            ax4.clear()
-            self.plot_scatter(x[mask], y[mask], x_label, y_label, ax=ax4, pick_event=on_pick,
-                              alpha=0.8)
+            ax4.selected.set_data(x[ax.mask], y[ax.mask])
+            ax4.selected.selected_map = ax4.data_index[ax.mask.flatten()]
             plt.draw()
 
-        self.plot_image(self.unwrapped['r'], cmap='Reds', ax=ax1)
-        self.plot_image(self.unwrapped['g'], cmap='Greens', ax=ax2, click_event=on_click)
-        self.plot_image(self.unwrapped['b'], cmap='Blues', ax=ax3)
-
+        self.plot_image(self.unwrapped, 'r', cmap='Reds', ax=ax1)
+        self.plot_image(self.unwrapped, 'g', cmap='Greens', ax=ax2, click_event=on_click)
+        self.plot_image(self.unwrapped, 'b', cmap='Blues', ax=ax3)
         self.plot_scatter(x, y, x_label, y_label, ax=ax4, pick_event=on_pick)
 
         figManager = plt.get_current_fig_manager()
